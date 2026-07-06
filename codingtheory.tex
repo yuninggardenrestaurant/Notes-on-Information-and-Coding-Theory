@@ -152,7 +152,7 @@ L(v_j \mid \mathbf{y}) \triangleq
 
 The VN and CN decoders work cooperatively and iteratively to estimate $L(v_j \mid \mathbf{y})$ for $j = 0, 1, . . ., n-1$. Throughout our development, the \textbf{flooding schedule} is employed. According to this schedule, all VNs process their inputs and pass extrinsic information up to their neighboring check nodes; the check nodes then process their inputs and pass extrinsic information down to their neighboring variable nodes; and the procedure repeats, starting with the variable nodes. After a preset maximum number of iterations of this VN/CN decoding round, or after some stopping criterion has been met, the decoder computes (estimates) the LLRs $L(v_j \mid \mathbf{y})$ from which decisions on the bits $v_j$ are made. When the cycles are large, the estimates will be very accurate and the decoder will have near-optimal (MAP) performance. 
 
-SPA assumes the \textit{LLR quantities received at each node from its neighbors are independent}. Clearly this breaks down when the number of iterations exceeds half of the Tanner graph's girth.
+SPA assumes the \textit{LLR quantities received at each node from its neighbors are independent}. Clearly this breaks down when the \textit{number of iterations exceeds half of the Tanner graph's girth}.
 
 \subsubsection{VN: Repetition Code MAP Decoder and APP Processor}
 
@@ -265,9 +265,13 @@ and transmits it to VN $j$.
 \State \textbf{Initialization:} For all $j$, initialize $L_j$ according to the appropriate channel model. Then, for all $i,j$ for which $h_{ij} = 1$, set $L_{j \to i} = L_j$.
 \State \textbf{CN update:} Compute outgoing CN messages $L_{i \to j}$ for each CN using
   \[
-  L_{i \to j} = 2\tanh^{-1}\left(\prod_{j' \in N(i)-\{j\}} \tanh\left(\frac{1}{2}L_{j' \to i}\right)\right),
+  \begin{aligned}
+  L_{i \to j} &= 2\tanh^{-1}\left(\prod_{j' \in N(i)-\{j\}} \tanh\left(\frac{1}{2}L_{j' \to i}\right)\right) \\
+  &= \prod_{j' \in N(i)-\{j\}} \alpha_{j'i} \cdot \phi\left( \sum_{j' \in (i)-\{j\}} \phi(\beta_{j'i}) \right) \\
+  & \text{where}\quad \phi(x) =-\log [\tanh (x/2)] = \log(\frac{e^x + 1}{e^x - 1}),\quad \alpha_{ji} = \text{sign}(L_{j \to i}),\quad \beta_{ji} = \mid L_{j \to i} \mid
+  \end{aligned}
   \]
-  and then transmit them to the VNs.
+  and then transmit them to the VNs. Note that $\phi (x) = \phi ^ {-1}(x)$ for $x > 0$, which is less challenging to compute compare with the product of the $\tanh$ and $\tanh^{-1}$ functions.
 \State \textbf{VN update:} Compute outgoing VN messages $L_{j \to i}$ for each VN using
   \[
   L_{j \to i} = L_j + \sum_{i' \in N(j)-\{i\}} L_{i' \to j},
@@ -347,6 +351,185 @@ Then the variable nodes are initialized by
 L(v_j \mid y_j) = 2\alpha_j y_j/\sigma^2.
 \]
 In practice, estimates of $\alpha_j$ and $\sigma^2$ are necessary.
+
+\subsubsection{The Min-Sum Decoder}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.5\linewidth]{phiplot.png}
+  \caption{A plot of $\phi(x)$}
+  \label{fig:phi}
+\end{figure}
+
+Consider the CN update equation in the Gallager SPA, from the shape of $\phi(x)$ that the largest term in the sum corresponds to the smallest $\beta_{ji}$ so that, assuming that this term dominates the sum,
+\[
+\phi\left(\sum_{j'} \phi(\beta_{j'i})\right)
+\simeq
+\phi\left(\phi\left(\min_{j'} \beta_{j'i}\right)\right)
+=
+\min_{j' \in N(i)-\{j\}} \beta_{j'i}
+\]
+Thus, the min-sum algorithm is simplt the log-domain SPA with Step 2 replaces by
+\[
+\text{CN update: } L_{i \to j}
+=
+\prod_{j' \in N(i)-\{j\}} \alpha_{j'i}
+\cdot
+\min_{j' \in N(i)-\{j\}} \beta_{j'i}.
+\]
+Note the fact that \textit{the sign of LLR represents the estimated code bit value (0 or 1) and the magnitude of LLR represents the confidence or reliability level of that estimate}. Therefore, the min-sum algorithm says that the CNs are only as confident as the least confident input.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.5\linewidth]{minsumexample.png}
+  \caption{An example of min-sum decoding on the BEC using the (3,2) regular LDPC code. Note that,for BEC, $\phi\left(\sum_{j'} \phi(\beta_{j'i})\right)$ is 0 or $\infty$ exactly when $min_{j'} \beta_{j'i}$ is 0 or $\infty$, respectively. Note also that this is equivalent to the iterative erasure filling algorithm.}
+\end{figure}
+
+Experimentally, for the first iteration of a min-sum decoder, the extrinsic information passed from a CN to a VN for a min-sum decoder is on average larger in magnitude than the extrinsic information that would have been passed by an SPA decoder. That is, the min-sum decoder is generally too optimistic in assigning reliabilities. Thus, we can use 
+\[
+\text{CN update: } L_{i \to j}
+=
+\prod_{j' \in N(i)-\{j\}} \alpha_{j'i}
+\cdot c_{atten} \cdot
+\min_{j' \in N(i)-\{j\}} \beta_{j'i}.
+\]
+where $0 < c_{atten} < 1$ is the arrenuation factor, usually $c_{atten} = 0.5$.
+
+An alternative technique for mitigating the overly optimistic extrinsic information that occurs in a min-sum decoder is to subtract a constant offset $c_{offset} > 0$ from each CN-to-VN message magnitude $|L_{i \to j}|$, subject to the constraint that the result is non-negative. Thus, the offset-min-sum algorithm computes
+\[
+\text{CN update: } L_{i \to j}
+=
+\prod_{j' \in N(i)-\{j\}} \alpha_{j'i}
+\cdot
+\max\left\{
+\min_{j' \in N(i)-\{j\}} \beta_{j'i} - c_{offset},\ 0
+\right\}.
+\]
+
+\subsection{Decoding Algoithms for the BEC and the BSC}
+
+The BEC and BSC are studied as special cases of the general SPA because their discrete channel outputs simplify the message-passing framework to simple symbolic operations. In the general SPA for the AWGN channel, received samples $y_j \in \mathbb{R}$ produce continuously-valued LLRs, and all Tanner graph messages are real-valued, requiring full nonlinear tanh-based computations at each node.
+
+On the \textbf{BEC}, the LLR takes only three values $\{-\infty, 0, +\infty\}$, and the SPA reduces to iterative erasure filling --- a check node resolves an erasure only if exactly one neighbor is erased, collapsing the check node update to a simple XOR. Decoding failure is governed entirely by \textbf{stopping sets}, which cause failure even under ML decoding and are therefore a fundamental limitation of the code itself.
+
+On the \textbf{BSC}, every received bit carries the same fixed-magnitude LLR $\log\frac{1-\varepsilon}{\varepsilon}$, providing no graded soft information. Gallager's \textbf{Algorithm A and B} exploit this by discarding soft information entirely, passing only binary hard decisions with XOR-based check node updates, achieving very low complexity at the cost of performance relative to full SPA.
+
+
+\subsubsection{Iterative Erasure Filling for the BEC}
+The iterative decoding algorithm for the BEC simply works to fill in the erased bits in such a way that all of the check equations contained in \textbf{H} are eventually satisfied.
+
+\begin{algorithm}[H]
+\caption{Iterative Erasure Decoding Algorithm}
+\begin{algorithmic}[1]
+\State Find all check equations (rows of \textbf{H}) involving a single erasure and solve for the values of bits corresponding to these erasures.
+\State Repeat Step 1 until there exist no more erasures or until all equations are unsolvable.
+\end{algorithmic}
+\end{algorithm}
+
+If no parity-check equation that involves only one of the erasures in the erasure set can be found, then none of the equations will be solvable and decoding will stop. Code bit sets that lead to unsolvable equations when they are erased are called \textbf{stopping sets}. Thus, a subset $S$ of code bits forms a stopping set if each equation that involves the bits in $S$ involves two or more of them. In Tanner graph, $S$ is a stopping set if all of its neighbors are connected to S at least twice. Such a configuration is problematic for an iterative decoder because, if these bits are erased, all equations involved will contain at least two erasures.
+
+\subsubsection{ML Decoder for the BEC}
+Adapted-\textbf{H} algorithm provides an example in which the stopping set
+in the previous example is resolvable.
+
+Suppose codeword $\mathbf{c}$ is transmitted over a BEC and the received word 
+$\mathbf{r}$ has elements in $\{0, 1, e\}$. Let $J$ denote the index set of 
+unerased positions and $J'$ the index set of erased positions. On the BEC, the ML criterion simplifies dramatically. The ML decoder selects the codeword $\hat{\mathbf{c}} \in \mathcal{C}$ maximising $P(\mathbf{r} \mid \mathbf{c})$, but since any codeword disagreeing with a received unerased bit has zero probability, ML reduces to finding the \textit{unique codeword consistent with all unerased positions}: 
+\[
+c_j = r_j \quad \forall\, j \in J
+\]
+Combined with the codeword validity constraint $\mathbf{c}\mathbf{H}^T = \mathbf{c}_{J'}\mathbf{H}_{J'}^T + \mathbf{c}_J \mathbf{H}_J^T = \mathbf{0}$, the ML criterion is fully expressed by the linear system:
+
+\[
+    \mathbf{c}_{J'}\mathbf{H}_{J'}^T = \mathbf{c}_J\mathbf{H}_J^T
+\]
+The right-hand side is fully known from the received word, so this is a linear 
+system over $\text{GF}(2)$ in the unknown $\mathbf{c}_{J'}$. A unique solution 
+exists if and only if the rows of $\mathbf{H}_{J'}^T$ are linearly independent, 
+which requires $|J'| \leq n - k$. Since any $d_{\min} - 1$ rows of $\mathbf{H}^T$ 
+are linearly independent, uniqueness is guaranteed whenever $|J'| < d_{\min}$.
+
+To solve the linear system $\mathbf{c}_{J'}\mathbf{H}_{J'}^T = \mathbf{c}_J\mathbf{H}_J^T$ 
+for the unknown erased bits $\mathbf{c}_{J'}$, apply Gaussian elimination to 
+$\mathbf{H}$ targeting the erased columns $J'$, producing a modified matrix:
+
+\[
+    \tilde{\mathbf{H}} = \begin{bmatrix} \tilde{\mathbf{H}}_J & \tilde{\mathbf{H}}_{J'} \end{bmatrix}
+\]
+where $\tilde{\mathbf{H}}_J$ is the submatrix of $\tilde{\mathbf{H}}$ corresponding 
+to the unerased columns $J$ modified by the elimination, and 
+$\tilde{\mathbf{H}}_{J'}$ is the submatrix of $\tilde{\mathbf{H}}$ corresponding 
+to the erased columns $J'$, which after elimination takes the form:
+
+\[
+    \tilde{\mathbf{H}}_{J'} = \begin{bmatrix} \mathbf{T} \\ \mathbf{M} \end{bmatrix}
+\]
+where $\mathbf{T}$ is a $|J'| \times |J'|$ lower-triangular matrix with ones on 
+the diagonal, and $\mathbf{M}$ is an arbitrary binary matrix (which may be empty). 
+The unknown erased bits $\mathbf{c}_{J'}$ are then recovered one at a time by 
+back-substitution through the top $|J'|$ parity-check equations corresponding to 
+$\mathbf{T}$, with the right-hand side fully computable from the known received 
+bits $\mathbf{c}_J = \mathbf{r}_J$.
+
+The system then becomes:
+\[
+    \mathbf{c}_{J'}\mathbf{T}^T = \mathbf{c}_J \tilde{\mathbf{H}}_J^T
+\]
+Since $\mathbf{T}$ is lower-triangular with ones on the diagonal, the unknown 
+erased bits $\mathbf{c}_{J'}$ are recovered one at a time by back-substitution 
+through the parity-check equations of $\tilde{\mathbf{H}}$. 
+
+Thus, ML decoding on the BEC reduces entirely to Gaussian elimination over 
+$\text{GF}(2)$ --- a linear algebraic operation with no probabilistic search 
+required.
+
+
+\subsubsection{Gallager's Algorithm A and B for the BSC}
+As LLRs are trivial in BSC model, we use $M_{j \to i}$ and $M_{i \to j}$ to denote the LLR messages being passed $L_{j \to i}$ and $L_{j \to i}$.
+
+Check node update equation for both algorithm A and B is
+\[
+M_{i \to j} =
+\bigoplus_{j' \in N(i)-\{j\}} M_{j' \to i}
+\]
+
+For algorithm A, the variable node update equation is
+\[
+M_{j \to i}
+=
+\begin{cases}
+M_j, & \text{if } \exists\, i' \in N(j)-\{i\} \text{ s.t. } M_{i' \to j} = M_j,\\
+M_j^c, & \text{otherwise.}
+\end{cases}
+\]
+where the outgoing message $M_{j \to i}$ is set to $M_j$ unless all of the
+incoming extrinsic messages $M_{i'→j}$ disagree.
+
+For algorithm A, the variable node update equation is
+\[
+M_{j \to i}
+=
+\begin{cases}
+M_j^c, & \text{if } \left|\left\{ i' \in N(j)-\{i\} : M_{i' \to j} = M_j^c \right\}\right| \geq t,\\
+M_j, & \text{otherwise.}
+\end{cases}
+\]
+which means as long as there are more than $t$ incoming extrinsic information disagree with $M_j$ then the outgoing $M_{j \to i}$ is set to $M_j^c$
+
+The code bit decisions for these algorithms are majority-based, as follows. If the degree of a variable node is odd, then the decision is set to the majority of the incoming check node messages. If the degree of a variable node is even, then the decision is set to majority of the check node messages and the channel message.
+
+\subsubsection{The Bit-Flipping Algorithm for the BSC}
+Noting that \textit{failed parity-check equations} are indicated by the elements of the syndrome, $\mathbf{s = r H^T}$, and that the \textit{number of failed parity checks for each code bit} is contained in the n-vector $\mathbf{f= sH}$ (operations over the integers). If the size of \textbf{H} is $m \times n$, then the size of \textbf{r, s, f} is $ 1 \times n$, $1 \times m$, $1 \times n$ respectively.
+
+\begin{algorithm}[H]
+\caption{The Bit-Flipping Algorithm}
+\begin{algorithmic}[1]
+\State Compute $\mathbf{s} = \mathbf{r}\mathbf{H}^{T}$ (operations over $\mathbb{F}^2$). If $\mathbf{s} = \mathbf{0}$, stop, since $\mathbf{r}$ is a codeword.
+\State Compute $\mathbf{f} = \mathbf{s}\mathbf{H}$ (operations over $\mathbb{Z}$).
+\State Identify the elements of $\mathbf{f}$ greater than some preset threshold, and then flip all the bits in $\mathbf{r}$ corresponding to those elements.
+\State If the maximum number of iterations has not been reached, go to Step 1 using the updated $\mathbf{r}$.
+\end{algorithmic}
+\end{algorithm}
+
 
 \clearpage
 \subsection{Generalized LDPC Codes}
